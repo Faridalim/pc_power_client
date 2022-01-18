@@ -11,8 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/labstack/echo/v4"
 	"github.com/tkanos/gonfig"
 )
+
+// default more than 15 so it become false/unused at app start
+var timeTracked int = 20
 
 type Configuration struct {
 	Id     string
@@ -25,18 +29,50 @@ type Result struct {
 	Data    struct {
 		Id          int       `json:"id"`
 		Last_active time.Time `json:"last_active"`
-		Perintah    string    `json: "perintah"`
+		Perintah    string    `json:"perintah"`
 	} `json:"data"`
 }
 
 func main() {
+
+	// loop last active
+	go updateLastActive()
+
+	//loop time tracker
+	go timeTracker()
+	//run local server to receive if app is used
+	e := echo.New()
+	e.GET("/", reportState)
+	e.GET("/cek", getTracked)
+	e.Logger.Fatal(e.Start("127.0.0.1:2000"))
+
+}
+
+func readConfig() Configuration {
+	conf := Configuration{}
+	gonfig.GetConf("config.json", &conf)
+	return conf
+}
+
+func updateLastActive() {
 	for {
 		conf := readConfig()
 		targetUrl := "http://" + conf.Remote + ":3001/pc/last_active"
 		jsonResult := Result{}
 
+		// check apakah pc in use/tidak. Jika time tracked > 10 maka false. if time tracked <= 10 maka true
+
+		var pcInUse bool = timeTracked <= 15
+		var strInUse string
+		if pcInUse {
+			strInUse = "true"
+		} else {
+			strInUse = "false"
+		}
+
 		data := url.Values{}
 		data.Set("id", conf.Id)
+		data.Set("in_use", strInUse)
 
 		client := &http.Client{}
 		req, err := http.NewRequest("POST", targetUrl, strings.NewReader(data.Encode()))
@@ -54,13 +90,13 @@ func main() {
 			continue
 		}
 
-		defer res.Body.Close()
-
 		body, err := ioutil.ReadAll(res.Body)
 		if err != nil {
-			fmt.Println("Read Result failed\n")
+			fmt.Println("Read Result failed")
 			continue
 		}
+
+		res.Body.Close()
 
 		// fmt.Println(string(body))
 
@@ -88,8 +124,24 @@ func main() {
 	}
 }
 
-func readConfig() Configuration {
-	conf := Configuration{}
-	gonfig.GetConf("config.json", &conf)
-	return conf
+func reportState(c echo.Context) error {
+	timeTracked = 0
+	fmt.Println("time tracked : ", timeTracked)
+	return c.JSON(200, map[string]string{
+		"message": "sukses",
+	})
+}
+
+func getTracked(c echo.Context) error {
+	return c.JSON(200, map[string]int{
+		"time tracker": timeTracked,
+	})
+}
+
+func timeTracker() {
+	for {
+		time.Sleep(1 * time.Second)
+		timeTracked = timeTracked + 1
+		fmt.Println("time tracker : ", timeTracked)
+	}
 }
